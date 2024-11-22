@@ -1,0 +1,52 @@
+Users
+------
+Admin, Customer
+
+Business Functionalities
+------------------------
+
+Admin - 
+
+Login
+Add new customer
+View Customer details
+Modify Customer details
+Remove Customer details
+Modify Connection details
+Add Billing Units to customer
+
+
+Customer - 
+
+Create a new account/connection
+login into system
+View bill
+View Customer Details
+Customer Complaint
+(Payment)
+View Payment History
+Modify Customer/Connection details
+		
+
+
+Entities and their associations
+-------------------------------
+Customer - id, name, address, phone, password
+Connection - id, connection type(Industrial-9, Domestic-6, Commercial-8), rate
+Rule - If Units is between 0-250 rate is as above, 
+if it is between 250-400 price will be 1.5x normal price.
+if it is above 400 price will be 2x rate.
+Bill - id, billing units, total amount
+Admin - Default static login details
+
+
+Customer one-to-many Bill
+Customer one-to-one Connection
+Connection one-to-many bill
+
+Services -
+
+Billing Service
+Customer Service
+Connection Services
+User Service
