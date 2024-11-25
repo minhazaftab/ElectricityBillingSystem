@@ -1,0 +1,475 @@
+Step 1: Setting Up the Authentication Service
+
+The authentication service will manage user logins and generate JWT tokens. Let’s start by defining the service architecture and functionality step-by-step.
+Create the Authentication Service
+1. Add Dependencies in pom.xml
+
+Include the following dependencies:
+
+<!-- Spring Boot Starter Web -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-web</artifactId>
+</dependency>
+
+<!-- Spring Boot Starter Security -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-security</artifactId>
+</dependency>
+
+<!-- JWT Library -->
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt</artifactId>
+    <version>0.9.1</version>
+</dependency>
+
+<!-- PostgreSQL Driver -->
+<dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+    <scope>runtime</scope>
+</dependency>
+
+<!-- Lombok -->
+<dependency>
+    <groupId>org.projectlombok</groupId>
+    <artifactId>lombok</artifactId>
+    <scope>provided</scope>
+</dependency>
+
+<!-- Spring Boot Devtools -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-devtools</artifactId>
+    <scope>runtime</scope>
+</dependency>
+
+2. Define the User Entity
+
+Create the User class to represent the user table in the database.
+
+@Entity
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Table(name = "users")
+public class User {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String username;
+
+    @Column(nullable = false)
+    private String password;
+
+    @Column(nullable = false)
+    private String userType; // "customer" or "admin"
+}
+
+3. Create the User Repository
+
+Create a UserRepository interface to handle database operations.
+
+@Repository
+public interface UserRepository extends JpaRepository<User, Long> {
+    Optional<User> findByUsername(String username);
+}
+
+4. Add a User Initialization Component
+
+This component will populate the database with the predefined admin user and fetch customer data from the Customer service.
+
+@Component
+public class UserInitializer {
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private CustomerClient customerClient; // Feign client to fetch customers from Customer service
+
+    @PostConstruct
+    public void initializeUsers() {
+        // Add admin user
+        if (!userRepository.findByUsername("admin").isPresent()) {
+            User admin = new User(null, "admin", "admin", "admin");
+            userRepository.save(admin);
+        }
+
+        // Fetch and add customers from Customer service
+        List<Customer> customers = customerClient.getAllCustomers();
+        for (Customer customer : customers) {
+            if (!userRepository.findByUsername(customer.getName()).isPresent()) {
+                User user = new User(null, customer.getName(), customer.getPassword(), "customer");
+                userRepository.save(user);
+            }
+        }
+    }
+}
+
+5. Define the Feign Client for Customer Service
+
+Create a Feign client to interact with the Customer service.
+
+@FeignClient(name = "customer-service")
+public interface CustomerClient {
+
+    @GetMapping("/allcustomers")
+    List<Customer> getAllCustomers();
+}
+
+6. Configure Database and Eureka
+
+Update application.properties:
+
+spring.application.name=auth-service
+server.port=8083
+
+# PostgreSQL Configuration
+spring.datasource.url=jdbc:postgresql://localhost:5432/microservices
+spring.datasource.username=your_db_username
+spring.datasource.password=your_db_password
+spring.jpa.hibernate.ddl-auto=update
+
+# Eureka Client Configuration
+eureka.client.service-url.defaultZone=http://localhost:8761/eureka/
+eureka.client.register-with-eureka=true
+eureka.client.fetch-registry=true
+
+Enable Eureka in the main application:
+
+@SpringBootApplication
+@EnableDiscoveryClient
+@EnableFeignClients
+public class AuthServiceApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(AuthServiceApplication.class, args);
+    }
+}
+
+Step 2: Implement JWT Token Generation and Validation
+
+The authentication service will generate a JWT upon successful login and validate it for secured endpoints.
+1. Add a Utility Class for JWT
+
+Create a utility class to handle JWT creation and validation.
+
+@Component
+public class JwtUtil {
+
+    private final String SECRET_KEY = "secret"; // Use a stronger key in production
+
+    public String generateToken(String username, String userType) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("userType", userType);
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(username)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + 1000 * 60 * 60 * 10)) // 10 hours
+                .signWith(SignatureAlgorithm.HS256, SECRET_KEY)
+                .compact();
+    }
+
+    public String extractUsername(String token) {
+        return extractClaim(token, Claims::getSubject);
+    }
+
+    public String extractUserType(String token) {
+        return (String) extractAllClaims(token).get("userType");
+    }
+
+    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+        final Claims claims = extractAllClaims(token);
+        return claimsResolver.apply(claims);
+    }
+
+    private Claims extractAllClaims(String token) {
+        return Jwts.parser().setSigningKey(SECRET_KEY).parseClaimsJws(token).getBody();
+    }
+
+    public boolean isTokenValid(String token, String username) {
+        final String extractedUsername = extractUsername(token);
+        return (extractedUsername.equals(username) && !isTokenExpired(token));
+    }
+
+    private boolean isTokenExpired(String token) {
+        return extractAllClaims(token).getExpiration().before(new Date());
+    }
+}
+
+2. Create a Login Request DTO
+
+Define a LoginRequest class to receive login credentials.
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class LoginRequest {
+    private String username;
+    private String password;
+}
+
+3. Create a Login Response DTO
+
+Define a LoginResponse class to return the JWT token.
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class LoginResponse {
+    private String jwtToken;
+    private String userType;
+}
+
+4. Implement Authentication Service Logic
+
+Create a service class to handle login requests and generate JWTs.
+
+@Service
+public class AuthService {
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    public LoginResponse authenticate(LoginRequest loginRequest) {
+        User user = userRepository.findByUsername(loginRequest.getUsername())
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        if (!user.getPassword().equals(loginRequest.getPassword())) {
+            throw new BadCredentialsException("Invalid password");
+        }
+
+        // Generate JWT
+        String jwtToken = jwtUtil.generateToken(user.getUsername(), user.getUserType());
+        return new LoginResponse(jwtToken, user.getUserType());
+    }
+}
+
+5. Create Authentication Controller
+
+Expose a login endpoint in the controller.
+
+@RestController
+@RequestMapping("/auth")
+public class AuthController {
+
+    @Autowired
+    private AuthService authService;
+
+    @PostMapping("/login")
+    public LoginResponse login(@RequestBody LoginRequest loginRequest) {
+        return authService.authenticate(loginRequest);
+    }
+}
+
+6. Add Security Configuration
+
+Secure the service using Spring Security to allow only authenticated requests to access secured endpoints.
+
+@EnableWebSecurity
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        http.csrf().disable()
+                .authorizeRequests()
+                .antMatchers("/auth/login").permitAll() // Allow login endpoint
+                .anyRequest().authenticated(); // Secure all other endpoints
+    }
+
+    @Override
+    protected void configure(AuthenticationManagerBuilder auth) {
+        // No in-memory authentication since we are using the database
+    }
+}
+
+7. Test the Authentication Flow
+Start the Authentication Service:
+
+    Ensure the service is registered with Eureka.
+    Use tools like Postman or curl to test the /auth/login endpoint.
+
+Test Case 1: Login with Admin Credentials
+
+    Request: POST /auth/login
+    Body:
+
+{
+    "username": "admin",
+    "password": "admin"
+}
+
+Response:
+
+    {
+        "jwtToken": "eyJhbGciOiJIUzI1NiIs...",
+        "userType": "admin"
+    }
+
+Test Case 2: Login with a Customer
+
+    Use a username and password from the users table for a customer.
+
+8. Add JWT Filter for Token Validation
+
+Create a filter to validate incoming requests by checking the JWT token.
+
+@Component
+public class JwtRequestFilter extends OncePerRequestFilter {
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain chain) throws ServletException, IOException {
+
+        final String authorizationHeader = request.getHeader("Authorization");
+
+        String username = null;
+        String jwt = null;
+
+        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
+            jwt = authorizationHeader.substring(7);
+            username = jwtUtil.extractUsername(jwt);
+        }
+
+        if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            User user = userRepository.findByUsername(username).orElse(null);
+
+            if (user != null && jwtUtil.isTokenValid(jwt, user.getUsername())) {
+                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                        user.getUsername(), null, List.of());
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+            }
+        }
+        chain.doFilter(request, response);
+    }
+}
+
+9. Update Security Configuration
+
+Integrate the JWT filter into the security configuration and enable role-based access control.
+
+@EnableWebSecurity
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+
+    @Autowired
+    private JwtRequestFilter jwtRequestFilter;
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        http.csrf().disable()
+                .authorizeRequests()
+                .antMatchers("/auth/login").permitAll() // Public endpoint
+                .antMatchers("/admin/**").hasAuthority("admin") // Admin-only endpoints
+                .antMatchers("/customer/**").hasAuthority("customer") // Customer-only endpoints
+                .anyRequest().authenticated(); // All other endpoints require authentication
+
+        http.addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class);
+    }
+}
+
+10. Add Role-Based Authorization Utility
+
+Create a utility method to extract user roles from the JWT.
+
+@Component
+public class RoleUtil {
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    public boolean isUserAdmin(String token) {
+        String userType = jwtUtil.extractUserType(token);
+        return "admin".equalsIgnoreCase(userType);
+    }
+
+    public boolean isUserCustomer(String token) {
+        String userType = jwtUtil.extractUserType(token);
+        return "customer".equalsIgnoreCase(userType);
+    }
+}
+
+11. Add Admin and Customer Endpoints
+
+Expose secured endpoints for different user roles.
+
+@RestController
+@RequestMapping("/admin")
+public class AdminController {
+
+    @GetMapping("/dashboard")
+    public String adminDashboard() {
+        return "Welcome to the Admin Dashboard!";
+    }
+}
+
+@RestController
+@RequestMapping("/customer")
+public class CustomerController {
+
+    @GetMapping("/dashboard")
+    public String customerDashboard() {
+        return "Welcome to the Customer Dashboard!";
+    }
+}
+
+12. Testing the Service
+Test Login
+
+    Use the /auth/login endpoint to obtain a JWT.
+    Include the JWT in the Authorization header for all subsequent requests:
+        Format: Bearer <JWT_TOKEN>
+
+Test Admin Role
+
+    Use the admin token to access /admin/dashboard.
+
+Test Customer Role
+
+    Use a customer token to access /customer/dashboard.
+
+13. Final Configurations
+Configure Application Properties
+
+Update application.properties with security and server configurations:
+
+spring.application.name=auth-service
+server.port=8083
+
+# JWT Secret
+jwt.secret=your_jwt_secret
+
+# PostgreSQL Configuration
+spring.datasource.url=jdbc:postgresql://localhost:5432/microservices
+spring.datasource.username=your_db_username
+spring.datasource.password=your_db_password
+spring.jpa.hibernate.ddl-auto=update
+
+# Eureka Client Configuration
+eureka.client.service-url.defaultZone=http://localhost:8761/eureka/
+eureka.client.register-with-eureka=true
+eureka.client.fetch-registry=true
+
+Summary of Functionality
+
+    Login Endpoint: Generates a JWT for valid users.
+    JWT Filter: Validates the token for all secured endpoints.
+    Role-Based Authorization: Ensures only users with the correct roles can access specific endpoints.
+    Admin and Customer Dashboards: Example endpoints for different user roles.
+
+The service is now ready! Let me know if you need further clarifications or additions.
