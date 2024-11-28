@@ -1,0 +1,67 @@
++----------------------+
+|        Bill          |
++----------------------+
+| - billId: int        |
+| - customerId: int    |
+| - connectionType: String |
+| - units: int         |
+| - billAmount: int    |
++----------------------+
+
+BillController:
++ createBill(Bill)
++ getAllBills()
++ getBillById(int)
++ updateBill(int, Bill)
++ deleteBill(int)
++ generateBill(int)
++ getBillByCustId(int)
+
++----------------------+
+|     Connection       |
++----------------------+
+| - connectionId: int  |
+| - connectionType: String |
+| - unitPrice: int     |
++----------------------+
+
+ConnectionController:
++ createConnection(Connection)
++ getAllConnections()
++ getConnectionById(int)
++ updateConnection(int, Connection)
++ deleteConnection(int)
++ getConnectionsByConnectionType(String)
+
++----------------------+
+|        User          |
++----------------------+
+| - id: Long           |
+| - username: String   |
+| - password: String   |
+| - roles: Set<Role>   |
++----------------------+
+
+AuthController:
++ authenticateUser(LoginRequest)
++ registerUser(SignupRequest)
++ generateUsername(String, Long) (private)
+
++----------------------+
+|      Customer        |
++----------------------+
+| - customerId: int    |
+| - customerName: String |
+| - customerAddress: String |
+| - customerPhoneNo: long |
+| - customerPassword: String |
+| - connectionType: String   |
++----------------------+
+
+CustomerController:
++ createCustomer(Customer)
++ loginCustomer(String, String)
++ getAllCustomers()
++ getCustomerById(int)
++ updateCustomer(int, Customer)
++ deleteCustomer(int)
